@@ -1,0 +1,124 @@
+---
+title: "Explore `octopus`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+les_packages = sapply(c('tidyverse','data.table', 'DT',
+                        'lubridate','ggthemes','ggridges'),
+                      require, character.only = TRUE)
+Sys.setlocale("LC_CTYPE", "thai")
+options(encoding="UTF-8")
+```
+
+# Problem Statement
+
+On July 23, 2020, [Ministry of Higher Education, Science, Research and Innovation](https://www.mhesi.go.th/home/), strictly speaking its committee กรรมการข้าราชการพลเรือนในสถาบันอุดมศึกษา (ก.พ.อ.), announced the 2020 guideline for academic rank acquisition ([หลักเกณฑ์และวิธีการพิจารณาแต่งตั้งบุคคลให้ดำรงตำแหน่งผู้ช่วยศาสตราจารย์ รองศาสตราจารย์ และศาสตราจารย์ พ.ศ. ๒๕๖๓](http://www.ratchakitcha.soc.go.th/DATA/PDF/2563/E/147/T_0020.PDF)). The guideline details several ways to achieve the academic ranks including the number of academic publishings and internationally referenced textbooks. One of the ways requires certain number of citations and h-index on [SCOPUS](https://www.scopus.com/) for Associate Professorship and Professorship:
+
+##  For science, technology, engineering, medical research, etc.
+* Associate Professorship 
+    * 10 papers on Q1/Q2 SCOPUS database, 5 of which the author is first or corresponding author
+    * SCOPUS Lifetime citations of 500, excluding self-citations
+    * SCOPUS Lifetime h-index of 8 or more
+    * Principal investigator for at least 5 projects funded from sources outside of the one's own institution
+* Professorship
+    * 10 papers on SCOPUS database since becoming an associate professor, all of which the author is first or corresponding author
+    * SCOPUS Lifetime citations of 1,000, excluding self-citations
+    * SCOPUS Lifetime h-index of 18 or more
+    * Principal investigator for at least 10 projects funded from sources outside of the one's own institution
+
+##  For business management, economics, etc.
+* Associate Professorship
+    * 5 papers on SCOPUS database, 3 of which the author is first or corresponding author
+    * SCOPUS Lifetime citations of 150, excluding self-citations
+    * SCOPUS Lifetime h-index of 4 or more
+    * Principal investigator for at least 5 projects funded from sources outside of the one's own institution
+* Professorship
+    * 10 papers on SCOPUS database since becoming an associate professor, all of which the author is first or corresponding author
+    * SCOPUS Lifetime citations of, excluding self-citations, 500 for management and 200 for economics
+    * SCOPUS Lifetime h-index of 8 or more
+    * Principal investigator for at least 10 projects funded from sources outside of the one's own institution
+    
+# Data
+
+```{r}
+df = fread('data/octopus_field_group.csv',data.table = FALSE,
+           encoding = 'UTF-8') 
+```
+
+# H-Index
+
+## % Missing H-Index
+
+```{r}
+df$missing_h_index = is.na(df$h_index)
+agg = df %>% group_by(academic_rank) %>% 
+  summarise(missing_h_index=mean(missing_h_index))
+g = ggplot(agg, aes(x=academic_rank,y=missing_h_index)) +
+  geom_col() + theme_minimal() + coord_flip()+
+  geom_text(aes(x=academic_rank,y=missing_h_index+0.07,
+            label=paste(round(100*missing_h_index),'%')))+
+  scale_y_continuous(labels = scales::percent)+
+  ylab('h-index') + xlab('Academic Rank')
+g
+```
+
+```{r}
+agg = df %>% group_by(field_group) %>% 
+  summarise(missing_h_index=mean(missing_h_index))
+g = ggplot(agg, aes(x=field_group,y=missing_h_index)) +
+  geom_col() + theme_minimal() + coord_flip()+
+  geom_text(aes(x=field_group,y=missing_h_index+0.07,
+            label=paste(round(100*missing_h_index),'%')))+
+  scale_y_continuous(labels = scales::percent)+
+  ylab('h-index') + xlab('Field Group')
+g
+```
+
+```{r}
+agg = df %>% group_by(funded_by) %>% 
+  summarise(missing_h_index=mean(missing_h_index))
+g = ggplot(agg, aes(x=funded_by,y=missing_h_index)) +
+  geom_col() + theme_minimal() + coord_flip()+
+  geom_text(aes(x=funded_by,y=missing_h_index+0.07,
+            label=paste(round(100*missing_h_index),'%')))+
+  scale_y_continuous(labels = scales::percent)+
+  ylab('h-index') + xlab('Funded by')
+g
+```
+
+## h-index Distribution (of Those Who Have It)
+
+```{r}
+d = df %>% filter(!is.na(h_index))
+g = ggplot(d,aes(x = h_index, y = academic_rank, )) +
+  geom_density_ridges() + theme_minimal() +
+  xlab('h-index') + ylab('Academic Rank')+
+  scale_x_continuous(breaks = seq(0,60,10),limits=c(-5,60))
+
+g
+```
+
+```{r}
+d = df %>% filter(!is.na(h_index))
+g = ggplot(d,aes(x = h_index, y = field_group, )) +
+  geom_density_ridges() + theme_minimal() +
+  xlab('h-index') + ylab('Field Group')+
+  scale_x_continuous(breaks = seq(0,30,5),limits=c(-5,30))
+
+g
+```
+
+```{r}
+d = df %>% filter(!is.na(h_index))
+g = ggplot(d,aes(x = h_index, y = funded_by, )) +
+  geom_density_ridges() + theme_minimal() +
+  xlab('h-index') + ylab('Funded by')+
+  scale_x_continuous(breaks = seq(0,30,5),limits=c(-5,30))
+
+g
+```
