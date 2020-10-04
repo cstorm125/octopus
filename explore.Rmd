@@ -9,15 +9,17 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 les_packages = sapply(c('tidyverse','data.table', 'DT',
-                        'lubridate','ggthemes','ggridges'),
+                        'lubridate','ggthemes','ggridges',
+                        'ggbeeswarm','gridExtra','rpart',
+                        'rpart.plot','caret'),
                       require, character.only = TRUE)
 Sys.setlocale("LC_CTYPE", "thai")
 options(encoding="UTF-8")
 ```
 
-# Problem Statement
+# What Happened
 
-On July 23, 2020, [Ministry of Higher Education, Science, Research and Innovation](https://www.mhesi.go.th/home/), strictly speaking its committee กรรมการข้าราชการพลเรือนในสถาบันอุดมศึกษา (ก.พ.อ.), announced the 2020 guideline for academic rank acquisition ([หลักเกณฑ์และวิธีการพิจารณาแต่งตั้งบุคคลให้ดำรงตำแหน่งผู้ช่วยศาสตราจารย์ รองศาสตราจารย์ และศาสตราจารย์ พ.ศ. ๒๕๖๓](http://www.ratchakitcha.soc.go.th/DATA/PDF/2563/E/147/T_0020.PDF)). The guideline details several ways to achieve the academic ranks including the number of academic publishings and internationally referenced textbooks. One of the ways requires certain number of citations and h-index on [SCOPUS](https://www.scopus.com/) for Associate Professorship and Professorship:
+On July 23, 2020, [Ministry of Higher Education, Science, Research and Innovation](https://www.mhesi.go.th/home/), strictly speaking its committee กรรมการข้าราชการพลเรือนในสถาบันอุดมศึกษา (ก.พ.อ.), announced the 2020 guideline for academic rank acquisition ([หลักเกณฑ์และวิธีการพิจารณาแต่งตั้งบุคคลให้ดำรงตำแหน่งผู้ช่วยศาสตราจารย์ รองศาสตราจารย์ และศาสตราจารย์ พ.ศ. ๒๕๖๓](http://www.ratchakitcha.soc.go.th/DATA/PDF/2563/E/147/T_0020.PDF)). The guideline details several ways to achieve the academic ranks including the number of academic publishings and internationally referenced textbooks. One of the ways requires certain number of citations and h-index on [SCOPUS](https://www.scopus.com/) for Associate Professorship and Professorship.
 
 ##  For science, technology, engineering, medical research, etc.
 * Associate Professorship 
@@ -45,80 +47,584 @@ On July 23, 2020, [Ministry of Higher Education, Science, Research and Innovatio
     
 # Data
 
+The `octopus` dataset is constructed by the following procedures:
+
+1. We obtained the list of every person with an academic rank from Associate Professor and above from (National Academic Position)[http://www.nap.mua.go.th/FacultyRecord/SearchDataEntryIns.aspx] published by Office of the Higher Education Commission.
+
+2. We then employed [Hope Data Annotations](https://www.facebook.com/hopedataannotations/) to romanize Thai names and search, to the best of their abilities, corresponding profiles on [SCOPUS](https://www.scopus.com/).
+
+3. If there is a profile on [SCOPUS](https://www.scopus.com/), we obtained h-index, citation counts, and number of documents from the portal. Note that there might be cases where the profiles are not found due to human errors in romanization. Unfortunately, we cannot circumvent this problem since National Academic Position website does not disclose SCOPUS names.
+
+4. We process the data according to `clean.ipynb`, most notably removing duplicates. We also create `field_group` based on a clustering of multilingual universal sentence encoder vectors based on field names; this is done to group over 1,000 fields into a tractable number.
+
 ```{r}
 df = fread('data/octopus_field_group.csv',data.table = FALSE,
            encoding = 'UTF-8') 
+df$missing_scopus = is.na(df$h_index)|is.na(df$citation_count)|is.na(df$doc_count)
+df$rank_i = as.numeric(as.factor(df$academic_rank))
+parse_rank = function(rank_i){
+  ref = c('asso_prof','asso_prof_sp','prof','prof_high','prof_sp')
+  return(ref[rank_i])
+}
+df$academic_rank = sapply(df$rank_i,parse_rank)
 ```
 
-# H-Index
+# How Many People Passed The Criteria
 
-## % Missing H-Index
+We apply the [now-suspended](https://www.dailynews.co.th/education/783160) criteria to current Associate Professors and Professors of all flavors to see how many in which academic ranks and field groups have passed. We treat those whose profiles cannot be found on SCOPUS by our annotators as failed.
+
+The rules we used are slightly modified to match our data availability:
+
+1. Associate Professorship
+
+* Natural Science and Engineering - h-index >= 8, citation counts >= 500, document counts >= 10
+
+* Others - h-index >= 4, citation counts >= 150, document counts >= 5
+
+2. Professorship
+
+* Natural Science and Engineering - h-index >= 18, citation counts >= 1,000, document counts >= 20 (since we counted 10 they should have had as associate professor)
+
+* Economics - h-index >= 8, citation counts >= 200, document counts >= 15 (since we counted 10 they should have had as associate professor)
+
+* Others - h-index >= 8, citation counts >= 300, document counts >= 15 (since we counted 10 they should have had as associate professor)
+
+Note that `asso_prof_sp` is special associate professor, `prof_high` is professor with higher pay, `prof_sp` is special professor, all of which are designation from the power that be.
 
 ```{r}
-df$missing_h_index = is.na(df$h_index)
+check_rules = function(academic_rank,field_group,
+                      h_index,citation_count,doc_count){
+  if(is.na(doc_count)|is.na(h_index)|is.na(citation_count)){
+    return(0)
+  }
+  if(academic_rank %in% c('asso_prof','asso_prof_sp')){
+    if(field_group %in% c('engineering','natural_science','medical')){
+      if((h_index>=8)&(citation_count>=500)&(doc_count>=10)){
+        return(1)
+      } else {
+        return(0)
+      }
+    } else {
+      if((h_index>=4)&(citation_count>=150)&(doc_count>=5)){
+        return(1)
+      } else {
+        return(0)
+      }
+    }
+  } else {
+    if(field_group %in% c('engineering','natural_science','medical')){
+      if((h_index>=18)&(citation_count>=1000)&(doc_count>=20)){
+        return(1)
+      } else {
+        return(0)
+      }
+    } else if(field_group=='economics'){
+      if((h_index>=8)&(citation_count>=200)&(doc_count>=15)){
+        return(1)
+      } else {
+        return(0)
+      }
+    } else {
+      if((h_index>=8)&(citation_count>=500)&(doc_count>=15)){
+        return(1)
+      } else {
+        return(0)
+      }
+    }
+  }
+}
+
+df$passed = mapply(check_rules,df$academic_rank,df$field_group,
+                   df$h_index,df$citation_count,df$doc_count)
+# write.csv(df,'data/octopus_passed.csv',row.names = FALSE)
+```
+
+First, we look at them one variable at a time by academic rank and field group when the SCOPUS profile is missing and NOT missing.
+
+```{r}
 agg = df %>% group_by(academic_rank) %>% 
-  summarise(missing_h_index=mean(missing_h_index))
-g = ggplot(agg, aes(x=academic_rank,y=missing_h_index)) +
+  summarise(passed=mean(passed),nb=n())
+g1 = ggplot(agg, aes(x=academic_rank,y=passed)) +
   geom_col() + theme_minimal() + coord_flip()+
-  geom_text(aes(x=academic_rank,y=missing_h_index+0.07,
-            label=paste(round(100*missing_h_index),'%')))+
-  scale_y_continuous(labels = scales::percent)+
-  ylab('h-index') + xlab('Academic Rank')
-g
+  theme(axis.text.y = element_text(size=15))+
+  geom_text(aes(x=academic_rank,y=passed+0.12,
+  label=paste0(paste0(round(100*passed),'%'),' (',nb,')')))+
+  scale_y_continuous(labels = scales::percent, limits = c(0,1))+
+  ylab('h-index') + xlab('% Passed (Total Names)') +
+  ggtitle('% Passed by Academic Rank')
+agg = df %>% filter(!is.na(h_index)) %>% group_by(academic_rank) %>% 
+  summarise(passed=mean(passed),nb=n())
+g2 = ggplot(agg, aes(x=academic_rank,y=passed)) +
+  geom_col() + theme_minimal() + coord_flip()+
+  theme(axis.text.y = element_text(size=15))+
+  geom_text(aes(x=academic_rank,y=passed+0.12,
+  label=paste0(paste0(round(100*passed),'%'),' (',nb,')')))+
+  scale_y_continuous(labels = scales::percent, limits = c(0,1))+
+  ylab('h-index') + xlab('% Passed (Total Names)') +
+  ggtitle('% Passed by Academic Rank; No Missing')
+grid.arrange(g1,g2,ncol=1)
 ```
 
 ```{r}
 agg = df %>% group_by(field_group) %>% 
-  summarise(missing_h_index=mean(missing_h_index))
-g = ggplot(agg, aes(x=field_group,y=missing_h_index)) +
+  summarise(passed=mean(passed),nb=n())
+g1 = ggplot(agg, aes(x=field_group,y=passed)) +
   geom_col() + theme_minimal() + coord_flip()+
-  geom_text(aes(x=field_group,y=missing_h_index+0.07,
-            label=paste(round(100*missing_h_index),'%')))+
-  scale_y_continuous(labels = scales::percent)+
-  ylab('h-index') + xlab('Field Group')
-g
-```
+  theme(axis.text.y = element_text(size=15))+
+  geom_text(aes(x=field_group,y=passed+0.12,
+  label=paste0(paste0(round(100*passed),'%'),' (',nb,')')))+
+  scale_y_continuous(labels = scales::percent, limits = c(0,1))+
+  ylab('h-index') + xlab('% Passed (Total Names)') +
+  ggtitle('% Passed by Field Groups')
 
-```{r}
-agg = df %>% group_by(funded_by) %>% 
-  summarise(missing_h_index=mean(missing_h_index))
-g = ggplot(agg, aes(x=funded_by,y=missing_h_index)) +
+agg = df %>% filter(!is.na(h_index)) %>% group_by(field_group) %>% 
+  summarise(passed=mean(passed),nb=n())
+g2 = ggplot(agg, aes(x=field_group,y=passed)) +
   geom_col() + theme_minimal() + coord_flip()+
-  geom_text(aes(x=funded_by,y=missing_h_index+0.07,
-            label=paste(round(100*missing_h_index),'%')))+
-  scale_y_continuous(labels = scales::percent)+
-  ylab('h-index') + xlab('Funded by')
+  theme(axis.text.y = element_text(size=15))+
+  geom_text(aes(x=field_group,y=passed+0.12,
+  label=paste0(paste0(round(100*passed),'%'),' (',nb,')')))+
+  scale_y_continuous(labels = scales::percent, limits = c(0,1))+
+  ylab('h-index') + xlab('% Passed (Total Names)') +
+  ggtitle('% Passed by Field Groups; No Missing')
+grid.arrange(g1,g2,ncol=1)
+```
+
+Then, we look at both of them at the same time for all names and only those who have SCOPUS profiles (We omit special ones since there are too few of them to pivot for two variables). At best, `medicine` field groups have just about half of all people passing the criteria. Clearly, this is not a very reasonable set of criteria failing half of the country's academic researchers in the field that are doing *the best*.
+
+```{r}
+agg = df %>% group_by(academic_rank,field_group) %>% 
+  summarise(passed=mean(passed),nb=n()) %>%
+  filter(academic_rank %in% c('prof','asso_prof'))
+g1 = ggplot(agg, aes(x=field_group,y=academic_rank,fill=passed)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(paste0(round(100*passed),'%'),' (',nb,')')),
+  col='white')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('% Passed by Field Groups x Academic Rank (Total Names)')
+agg = df %>% filter(!is.na(h_index)) %>% 
+  group_by(academic_rank,field_group) %>% 
+  summarise(passed=mean(passed),nb=n()) %>%
+  filter(academic_rank %in% c('prof','asso_prof'))
+g2 = ggplot(agg, aes(x=field_group,y=academic_rank,fill=passed)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(paste0(round(100*passed),'%'),' (',nb,')')),
+  col='white')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('% Passed by Field Groups x Academic Rank (Total Names); No Missing')
+grid.arrange(g1,g2,ncol=1)
+```
+
+# Data-driven and More Reasonable Criteria
+
+Assuming that we still want to use **h-index, citation counts and document counts** from SCOPUS as the main features, we can try to come up with a more reasonable criteria that does not fail `r round((1-mean(df$passed))*100)`% of all Associate Professors and Professors.
+
+We decide to omit all `r sum(df$missing_scopus)` names that we did not find their SCOPUS profiles. This could bias the study since some of them just might not have any publication at all but it is bias we are willing to endure over performing analysis over features that are all zeroes.
+
+```{r}
+agg = df %>% group_by(academic_rank) %>% 
+  summarise(missing_scopus=mean(missing_scopus),nb=n())
+g = ggplot(agg, aes(x=academic_rank,y=missing_scopus)) +
+  geom_col() + theme_minimal() + coord_flip()+
+  geom_text(aes(x=academic_rank,y=missing_scopus+0.12,
+  label=paste0(paste0(round(100*missing_scopus),'%'),' (',nb,')')))+
+  scale_y_continuous(labels = scales::percent, limits=c(0,1))+
+  theme(axis.text.y = element_text(size=15))+
+  ylab('% Missing SCOPUS (Total Number)') + xlab('Academic Rank')
 g
 ```
 
-## h-index Distribution (of Those Who Have It)
+```{r}
+d = df %>% 
+  filter(!is.na(h_index)&!is.na(citation_count)&!is.na(doc_count)) %>%
+  filter(academic_rank %in% c('prof','asso_prof')) %>%
+  select(academic_rank,field_group,
+         h_index,citation_count,doc_count,co_author_count)
+```
+
+We decide to perform the analysis with the remaining `r dim(d)[1]` names that have SCOPUS profiles. Academic ranks are also limited to regular professors and regular associate professors in to have enough samples for each subgroup.
+
+## Xth Percentile Thresholds
+
+The easiest option is to take a certain quantile of h-index, citation counts and document counts as a minimum criteria; for instance, taking the 20th percentile means that a newcomer should have a certain metric equal to or higher than 20% of the existing (associate) professors. We can also apply outlier detection techniques like filtering for 1.5 times interquartile range away from 25th percentile, but it turns out that does not work very well in our case.
+
+```{r,fig.width=7,fig.height=7}
+d = df %>% 
+  filter(!is.na(h_index)&!is.na(citation_count)&!is.na(doc_count)) %>%
+  filter(academic_rank %in% c('prof','asso_prof')) %>%
+  select(academic_rank,field_group,
+         h_index,citation_count,doc_count,co_author_count)
+agg = d %>% group_by(academic_rank) %>% 
+  summarise(crit=quantile(h_index,0.2))
+d = d %>% inner_join(agg) %>% 
+  mutate(passed = ifelse(h_index>=crit,'passed','failed'))
+
+g1 = ggplot(d, aes(x=academic_rank,y=h_index)) +
+  theme_minimal()+
+  geom_quasirandom(aes(color=passed), alpha=0.5)+
+  ylab('h-index') + xlab('Academic Rank')+
+  scale_color_wsj()+
+  scale_y_continuous(breaks=seq(0,80,10))+
+  theme(legend.position = 'bottom',
+        axis.text.y = element_text(size=15)) + coord_flip() +
+  ggtitle('Threshold at 20th Percentile of h-index')
+
+g2 = ggplot(d, aes(x=academic_rank,y=h_index)) +
+  theme_minimal()+
+  geom_boxplot(outlier.shape = NA)+
+  ylab('h-index') + xlab('Academic Rank')+
+  scale_color_wsj()+
+  scale_y_continuous(breaks=seq(0,50,5),limits=c(0,50))+
+  theme(legend.position = 'bottom',
+        axis.text.y = element_text(size=15)) + coord_flip() +
+  ggtitle('Lower Outlier by IQR Goes Below Zero h-index')
+
+grid.arrange(g1,g2,ncol=1)
+```
+
+```{r,fig.width=7,fig.height=7}
+d = df %>% 
+  filter(!is.na(h_index)&!is.na(citation_count)&!is.na(doc_count)) %>%
+  filter(academic_rank %in% c('prof','asso_prof')) %>%
+  select(academic_rank,field_group,
+         h_index,citation_count,doc_count,co_author_count)
+agg = d %>% group_by(field_group) %>% 
+  summarise(crit=quantile(h_index,0.2))
+d = d %>% inner_join(agg) %>% 
+  mutate(passed = ifelse(h_index>=crit,'passed','failed'))
+
+g1 = ggplot(d, aes(x=field_group,y=h_index)) +
+  theme_minimal()+
+  geom_quasirandom(aes(color=passed), alpha=0.5)+
+  ylab('h-index') + xlab('Field Group')+
+  scale_color_wsj()+
+  scale_y_continuous(breaks=seq(0,80,10))+
+  theme(legend.position = 'bottom',
+        axis.text.y = element_text(size=15)) + coord_flip() +
+  ggtitle('Threshold at 20th Percentile of h-index')
+
+g2 = ggplot(d, aes(x=field_group,y=h_index)) +
+  theme_minimal()+
+  geom_boxplot(outlier.shape = NA)+
+  ylab('h-index') + xlab('Field Group')+
+  scale_color_wsj()+
+  scale_y_continuous(breaks=seq(0,30,5),limits = c(0,30))+
+  theme(legend.position = 'bottom',
+        axis.text.y = element_text(size=15)) + coord_flip() +
+  ggtitle('Lower Outlier by IQR Goes Below Zero h-index')
+
+grid.arrange(g1,g2,ncol=1)
+```
+
+If we use this set of criteria, the thresholds for h-index, citation counts and document counts at 20th percentile will be as follows.
 
 ```{r}
-d = df %>% filter(!is.na(h_index))
-g = ggplot(d,aes(x = h_index, y = academic_rank, )) +
-  geom_density_ridges() + theme_minimal() +
-  xlab('h-index') + ylab('Academic Rank')+
-  scale_x_continuous(breaks = seq(0,60,10),limits=c(-5,60))
+agg = d %>% group_by(academic_rank,field_group) %>% 
+  summarise(h_index=quantile(h_index,0.2),
+            citation_count=quantile(citation_count,0.2),
+            doc_count=quantile(doc_count,0.2),
+            co_author_count=quantile(co_author_count,0.2),
+            nb=n())
+g1 = ggplot(agg, aes(x=field_group,y=academic_rank,fill=h_index)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(h_index,' (',nb,')')),
+  col='white')+ theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('h-index (Total Names)')
 
+g2 = ggplot(agg, aes(x=field_group,y=academic_rank,
+                     fill=citation_count)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(citation_count,' (',nb,')')),
+  col='white')+theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('Citation Counts (Total Names)')
+
+g3 = ggplot(agg, aes(x=field_group,y=academic_rank,
+                     fill=doc_count)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(doc_count,' (',nb,')')),
+  col='white')+theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('Document Counts (Total Names)')
+
+g4 = ggplot(agg, aes(x=field_group,y=academic_rank,
+                     fill=co_author_count)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(round(co_author_count,1),' (',nb,')')),
+  col='white')+theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('Co-author Counts (Total Names)')
+grid.arrange(g1,g2,g3,g4,ncol=2)
+```
+
+## Confidence Intervals
+
+Another method is to assume distribution of the metrics and analytically derive the confidence intervals. When we look at the ridgeline plots, we might be able to assume that these metrics follow an exponential distribution.
+
+```{r}
+d = df %>% 
+  filter(!is.na(h_index)&!is.na(citation_count)&!is.na(doc_count)) %>%
+  # filter(academic_rank %in% c('prof','asso_prof')) %>%
+  select(academic_rank,field_group,
+         h_index,citation_count,doc_count,co_author_count)
+g1 = ggplot(d,aes(x=h_index,y=academic_rank,
+                  fill=academic_rank,col=academic_rank)) + 
+  theme_minimal() + xlab('h-index') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-10,60)) +
+  theme(legend.position = 'none')
+g2 = ggplot(d,aes(x=citation_count,y=academic_rank,
+                  fill=academic_rank,col=academic_rank)) + 
+  theme_minimal() + xlab('Citation Counts') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-1000,8000)) +
+  theme(legend.position = 'none')
+g3 = ggplot(d,aes(x=doc_count,y=academic_rank,
+                  fill=academic_rank,col=academic_rank)) + 
+  theme_minimal() + xlab('Document Counts') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-30,500)) +
+  theme(legend.position = 'none')
+g4 = ggplot(d,aes(x=co_author_count,y=academic_rank,
+                  fill=academic_rank,col=academic_rank)) + 
+  theme_minimal() + xlab('Co-author Counts') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-100,1000)) +
+  theme(legend.position = 'none')
+grid.arrange(g1,g2,g3,g4,ncol=2)
+```
+
+We notice one thing that the initial criteria got right: social science and liberal arts should have a different set of criteria than natural science, engineering and medicine.
+
+```{r}
+g1 = ggplot(d,aes(x=h_index,y=field_group,
+                  fill=field_group,col=field_group)) + 
+  theme_minimal() + xlab('h-index') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-5,40)) +
+  theme(legend.position = 'none')
+g2 = ggplot(d,aes(x=citation_count,y=field_group,
+                  fill=field_group,col=field_group)) + 
+  theme_minimal() + xlab('Citation Counts') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-200,2000)) +
+  theme(legend.position = 'none')
+g3 = ggplot(d,aes(x=doc_count,y=field_group,
+                  fill=field_group,col=field_group)) + 
+  theme_minimal() + xlab('Document Counts') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-10,200)) +
+  theme(legend.position = 'none')
+g4 = ggplot(d,aes(x=co_author_count,y=field_group,
+                  fill=field_group,col=field_group)) + 
+  theme_minimal() + xlab('Co-author Counts') + ylab('Field Group') +
+  geom_density_ridges(alpha=0.5) +
+  scale_x_continuous(limits=c(-30,200)) +
+  theme(legend.position = 'none')
+grid.arrange(g1,g2,g3,g4,ncol=2)
+```
+
+At 80% confidence interval, the thresholds are as follows.
+
+```{r}
+conf_thres = function(mean_metric,p){
+  return(round(qexp(p,rate=1/mean_metric),1))
+}
+
+d = df %>% 
+  filter(!is.na(h_index)&!is.na(citation_count)&!is.na(doc_count)) %>%
+  filter(academic_rank %in% c('prof','asso_prof')) %>%
+  select(academic_rank,field_group,
+         h_index,citation_count,doc_count,co_author_count)
+agg = d %>% group_by(academic_rank,field_group) %>%
+  summarise(h_index=mean(h_index),citation_count=mean(citation_count),
+            doc_count=mean(doc_count),
+            co_author_count=mean(co_author_count),
+            nb=n())
+for (n in names(agg)[3:6]){
+  agg[n] = mapply(conf_thres,agg[n],0.2)
+}
+
+g1 = ggplot(agg, aes(x=field_group,y=academic_rank,fill=h_index)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(h_index,' (',nb,')')),
+  col='white')+ theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('h-index (Total Names)')
+
+g2 = ggplot(agg, aes(x=field_group,y=academic_rank,
+                     fill=citation_count)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(citation_count,' (',nb,')')),
+  col='white')+theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('Citation Counts (Total Names)')
+
+g3 = ggplot(agg, aes(x=field_group,y=academic_rank,
+                     fill=doc_count)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(doc_count,' (',nb,')')),
+  col='white')+theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('Document Counts (Total Names)')
+
+g4 = ggplot(agg, aes(x=field_group,y=academic_rank,
+                     fill=co_author_count)) +
+  geom_tile() + theme_minimal() + coord_flip()+
+  theme(axis.text.x = element_text(size=15))+
+  geom_text(aes(x=field_group,y=academic_rank,
+  label=paste0(round(co_author_count,1),' (',nb,')')),
+  col='white')+theme(legend.position = 'none')+
+  xlab('Field Group') + ylab('Academic Rank') +
+  ggtitle('Co-author Counts (Total Names)')
+grid.arrange(g1,g2,g3,g4,ncol=2)
+```
+
+
+## Clustering
+
+Instead of determining the threshold one by one, we can cluster them by optimizing for h-index, citation counts and document counts altogether.
+
+```{r}
+d = df %>% 
+  filter(!is.na(h_index)&!is.na(citation_count)&!is.na(doc_count)) %>%
+  filter(academic_rank %in% c('prof','asso_prof')) %>%
+  select(academic_rank,field_group,
+         h_index,citation_count,doc_count,co_author_count) %>%
+  mutate(big_group = ifelse(field_group %in% c('natural_science','medicine','enginnering'),'hard_science','others'))
+g1 = ggplot(d, aes(x=h_index,y=citation_count))+ 
+  geom_point() + theme_minimal() + theme(legend.position = 'none') +
+  geom_smooth(method='lm',se=FALSE)+
+  coord_cartesian(xlim=c(0,40),ylim=c(0,10000))
+g2 = ggplot(d, aes(x=h_index,y=doc_count))+ 
+  geom_smooth(method='lm',se=FALSE)+
+  geom_point()+ theme_minimal() + theme(legend.position = 'none') +
+  coord_cartesian(xlim=c(0,50),ylim=c(0,400))
+g3 = ggplot(d, aes(x=citation_count,y=doc_count))+ 
+  geom_smooth(method='lm',se=FALSE)+
+  geom_point()+ theme_minimal() + theme(legend.position = 'none') +
+  coord_cartesian(xlim=c(0,5000),ylim=c(0,300))
+g4 = ggplot(d, aes(x=h_index,y=co_author_count))+ 
+  geom_smooth(method='lm',se=FALSE)+
+  geom_point() + theme_minimal() + theme(legend.position = 'none') +
+  coord_cartesian(xlim=c(0,40),ylim=c(0,500))
+grid.arrange(g1,g2,g3,g4,ncol=2)
+```
+
+## Determine Optimal Number of Clusters
+
+We standardize h-index, citation counts and document counts then perform k-means clustering. The optimal k is determined by plotting within-cluster sum of squares from centroids.
+
+We learn from the previous sections that these metrics are distributed differently for natural science, medicine, engineering versus others, so we will perform the clustering for each group separately (we label them `hard_science` vs `others`).
+
+```{r}
+d_ = NULL
+for(bg in unique(d$big_group)){
+  for (ar in unique(d$academic_rank)){
+  scaled_d = d %>% filter(big_group==bg&academic_rank==ar) %>% 
+    select(h_index,citation_count,doc_count) 
+  scaled_d = scale(scaled_d+0.1) %>% data.frame
+  
+  ss = NULL
+  max_k = 10
+  for (i in 2:max_k){
+    ss = c(ss,kmeans(scaled_d,i)$tot.withinss)
+  }
+  d_ = rbind(d_,data.frame(bg_ar=paste0(bg,'|',ar),
+                           ss=ss,nb_cluster=2:max_k)) 
+  }
+}
+
+g = ggplot(d_, aes(x=nb_cluster,y=ss,
+                   color=bg_ar,group=bg_ar)) +
+  geom_line() + geom_point() + theme_minimal() +
+  ggtitle('k=4 sounds like a good place to start')+
+  geom_vline(xintercept = 4,linetype='dashed')+
+  xlab('Number of Clusters') + ylab('Within Sum of Squares')
 g
 ```
 
-```{r}
-d = df %>% filter(!is.na(h_index))
-g = ggplot(d,aes(x = h_index, y = field_group, )) +
-  geom_density_ridges() + theme_minimal() +
-  xlab('h-index') + ylab('Field Group')+
-  scale_x_continuous(breaks = seq(0,30,5),limits=c(-5,30))
+## Case Study - Find the Weakest Cluster for `others|asso_prof`
 
+We take the case of associate professorship for other fields than natural science, medicine and engineering which seems to be one of the more problematic rules to make; for example, 20th percentile of h-index is zero.
+
+```{r}
+bg='others'
+ar='asso_prof'
+opt_k = 4
+
+scaled_d = d %>% filter(big_group==bg&academic_rank==ar) %>% 
+  select(h_index,citation_count,doc_count) 
+scaled_d = scale(scaled_d+0.1) %>% data.frame
+```
+
+We group all `r dim(scaled_d)[1]` names int 4 clusters. We can see that cluster 2 is "the weakest link". 
+
+```{r}
+set.seed(1412)
+k = kmeans(scaled_d,opt_k)
+kdf = d %>% filter(big_group==bg&academic_rank==ar) %>% 
+  select(h_index,citation_count,doc_count) 
+kdf$cluster = k$cluster
+kagg= kdf %>% group_by(cluster) %>% 
+  summarise(nb=n(),
+            mean_h_index = mean(h_index),
+            mean_citation_count = mean(citation_count),
+            mean_doc_count=mean(doc_count))
+datatable(kagg) %>% 
+  formatRound(c('mean_h_index',
+                'mean_citation_count',
+                'mean_doc_count'))
+```
+
+
+```{r}
+mdf = kdf %>% mutate(cluster=ifelse(cluster==2,0,1))
+set.seed(1412)
+in_train = createDataPartition(mdf$cluster,p=0.8,list=FALSE)
+train_df = mdf[in_train,]
+valid_df = mdf[-in_train,]
+```
+
+One approach to create a set of rules that will NOT accept people who we see as the weakest link is to create a decision tree to predict cluster 3 vs not cluster 3. The prevalence of "acceptable names" is `r mean(mdf$cluster)`. We use a 80/20 train/validation split to validate the performance of our decision tree. 
+
+```{r}
+set.seed(1412)
+fit = rpart(cluster~., data=train_df)
+valid_df$pred = ifelse(predict(fit,valid_df)>0.5,1,0)
+result = table(valid_df$pred,valid_df$cluster) %>% data.frame
+names(result) = c('pred_label','true_label','nb')
+g = ggplot(result, aes(x=pred_label,y=true_label,fill=nb))+
+  geom_tile() + xlab('Predicted Acceptable') + ylab('True Acceptable')+
+  geom_text(aes(x=pred_label,y=true_label,label=nb),col='white')+
+  theme_minimal()+ theme(legend.position = 'none') +
+  ggtitle(paste0(round(100*mean(valid_df$cluster==valid_df$pred)),'% Accuracy based on ',dim(valid_df)[1],'-name validation set'))
 g
 ```
 
-```{r}
-d = df %>% filter(!is.na(h_index))
-g = ggplot(d,aes(x = h_index, y = funded_by, )) +
-  geom_density_ridges() + theme_minimal() +
-  xlab('h-index') + ylab('Funded by')+
-  scale_x_continuous(breaks = seq(0,30,5),limits=c(-5,30))
+Now that we know our decision tree approach is quite reliable we use all data and visualize the rules created by the decision tree as a guideline of how we could select an associate professor from `others` fields in real life.
 
-g
+
+```{r}
+fit_all = rpart(cluster~., data=mdf)
+rpart.plot(fit_all, box.palette="RdBu", shadow.col="gray", nn=TRUE)
 ```
