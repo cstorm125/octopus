@@ -118,14 +118,8 @@ check_rules = function(academic_rank,field_group,
       } else {
         return(0)
       }
-    } else if(field_group=='economics'){
-      if((h_index>=8)&(citation_count>=200)&(doc_count>=15)){
-        return(1)
-      } else {
-        return(0)
-      }
     } else {
-      if((h_index>=8)&(citation_count>=500)&(doc_count>=15)){
+      if((h_index>=8)&(citation_count>=200)&(doc_count>=15)){
         return(1)
       } else {
         return(0)
