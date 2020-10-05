@@ -376,25 +376,25 @@ d = df %>%
          h_index,citation_count,doc_count,co_author_count)
 g1 = ggplot(d,aes(x=h_index,y=academic_rank,
                   fill=academic_rank,col=academic_rank)) + 
-  theme_minimal() + xlab('h-index') + ylab('Field Group') +
+  theme_minimal() + xlab('h-index') + ylab('Academic Rank') +
   geom_density_ridges(alpha=0.5) +
   scale_x_continuous(limits=c(-10,60)) +
   theme(legend.position = 'none')
 g2 = ggplot(d,aes(x=citation_count,y=academic_rank,
                   fill=academic_rank,col=academic_rank)) + 
-  theme_minimal() + xlab('Citation Counts') + ylab('Field Group') +
+  theme_minimal() + xlab('Citation Counts') + ylab('Academic Rank') +
   geom_density_ridges(alpha=0.5) +
   scale_x_continuous(limits=c(-1000,8000)) +
   theme(legend.position = 'none')
 g3 = ggplot(d,aes(x=doc_count,y=academic_rank,
                   fill=academic_rank,col=academic_rank)) + 
-  theme_minimal() + xlab('Document Counts') + ylab('Field Group') +
+  theme_minimal() + xlab('Document Counts') + ylab('Academic Rank') +
   geom_density_ridges(alpha=0.5) +
   scale_x_continuous(limits=c(-30,500)) +
   theme(legend.position = 'none')
 g4 = ggplot(d,aes(x=co_author_count,y=academic_rank,
                   fill=academic_rank,col=academic_rank)) + 
-  theme_minimal() + xlab('Co-author Counts') + ylab('Field Group') +
+  theme_minimal() + xlab('Co-author Counts') + ylab('Academic Rank') +
   geom_density_ridges(alpha=0.5) +
   scale_x_continuous(limits=c(-100,1000)) +
   theme(legend.position = 'none')
